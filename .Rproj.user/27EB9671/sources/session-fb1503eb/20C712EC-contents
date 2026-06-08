@@ -1,0 +1,38 @@
+Package: microclimAg
+Title: Analyse du Microclimat Agricole et des Ilots de Chaleur Ruraux
+Version: 0.1.0
+Authors@R: 
+    person("Riham", "DAHNOUN", , "riham.dahnoun@iav.ac.ma", role = c("aut", "cre"))
+Description: Package R pour analyser les variations microclimatiques dans les
+    paysages agricoles a partir de donnees LST (Land Surface Temperature),
+    meteorologiques, d'occupation du sol et d'indices de vegetation (NDVI).
+    Permet d'identifier les ilots de chaleur ruraux, de cartographier les zones
+    thermiques et d'analyser les relations entre vegetation et temperature.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
+LazyData: false
+Depends: 
+    R (>= 4.0.0)
+Imports:
+    terra,
+    sf,
+    dplyr,
+    ggplot2,
+    tidyr,
+    lubridate,
+    readxl,
+    spdep,
+    stats,
+    grDevices,
+    methods,
+    utils,
+    tools
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown,
+    corrplot
+VignetteBuilder: knitr
+Config/testthat/edition: 3

@@ -1,0 +1,275 @@
+---
+title: "Introduction à microclimAg"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction à microclimAg}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  fig.width  = 7,
+  fig.height = 5,
+  warning  = FALSE,
+  message  = FALSE
+)
+library(microclimAg)
+library(terra)
+library(ggplot2)
+```
+
+## Présentation
+
+Le package **microclimAg** permet d'analyser les variations microclimatiques dans les paysages agricoles. Il combine :
+
+- La télédétection thermique (LST via MODIS/Landsat)
+- Les indices de végétation (NDVI)
+- Les données météorologiques de stations
+- L'occupation du sol
+- Des méthodes de machine learning spatial
+
+Ce workflow complet utilise des données simulées représentatives d'une zone agricole du Maroc.
+
+---
+
+## Étape 1 : Données météorologiques
+
+```{r weather}
+# Simuler 365 jours de données pour 5 stations météo
+weather <- simulate_weather_data(n_days = 365, n_stations = 5)
+
+# Aperçu
+head(weather, 8)
+
+# Statistiques de base
+summary(weather[, c("temperature", "humidity", "wind_speed")])
+```
+
+```{r weather-plot}
+# Visualiser la variation saisonnière
+ggplot(weather[weather$station_id == "ST01",], aes(x = date, y = temperature)) +
+  geom_line(color = "#1D9E75") +
+  geom_smooth(method = "loess", color = "#993C1D", se = FALSE) +
+  labs(title = "Variation saisonnière - Station ST01",
+       x = "Date", y = "Température (°C)") +
+  theme_minimal()
+```
+
+---
+
+## Étape 2 : Import des stations météo
+
+```{r stations}
+# Créer les coordonnées des stations
+stations_df <- data.frame(
+  station_id = paste0("ST", 1:5),
+  longitude  = c(-5.20, -5.10, -5.30, -5.05, -5.40),
+  latitude   = c(33.70, 33.80, 33.65, 33.90, 33.75),
+  nom        = paste("Station", 1:5)
+)
+
+# Convertir en objet spatial sf
+stations_sf <- import_station_locations(stations_df, plot = FALSE)
+print(stations_sf)
+```
+
+---
+
+## Étape 3 : Données LST
+
+```{r lst-download}
+# Simuler le téléchargement LST (3 périodes)
+lst <- download_lst_data(
+  start_date = "2023-04-01",
+  end_date   = "2023-09-30",
+  bbox       = c(-5.5, -5.0, 33.5, 34.0),
+  source     = "MODIS"
+)
+
+print(lst)
+```
+
+```{r lst-clean}
+# Nettoyer les données
+lst_clean <- clean_lst_data(lst, min_temp = 5, max_temp = 60)
+```
+
+```{r lst-map, fig.cap="Carte LST - Première date"}
+# Cartographier la première date
+plot_microclimate_map(lst_clean, type = "lst", layer_index = 1,
+                      title = "Température de surface - Printemps 2023")
+```
+
+---
+
+## Étape 4 : Anomalies thermiques
+
+```{r anomalies}
+# Calculer les anomalies par Z-score
+anomalies <- calculate_lst_anomaly(lst_clean, method = "zscore")
+```
+
+```{r anomaly-map, fig.cap="Carte des anomalies thermiques"}
+plot_microclimate_map(anomalies, type = "anomaly",
+                      title = "Anomalies thermiques Z-score")
+```
+
+---
+
+## Étape 5 : NDVI et végétation
+
+```{r ndvi}
+# Calculer le NDVI (simulé pour 6 dates)
+ndvi <- calculate_ndvi(n_dates = 6)
+print(ndvi)
+```
+
+```{r ndvi-map, fig.cap="Carte NDVI"}
+plot_microclimate_map(ndvi, type = "ndvi", layer_index = 1,
+                      title = "Indice NDVI - Végétation")
+```
+
+---
+
+## Étape 6 : Occupation du sol
+
+```{r landcover, fig.cap="Occupation du sol"}
+lc <- import_landcover()
+terra::plot(lc, col = c("#DAA520","#228B22","#90EE90","#DEB887","#808080"),
+            main = "Occupation du sol",
+            legend = FALSE)
+legend("bottomright", 
+       legend = c("Cultures","Forêt","Prairie","Sol nu","Urbain"),
+       fill   = c("#DAA520","#228B22","#90EE90","#DEB887","#808080"),
+       cex = 0.8)
+```
+
+---
+
+## Étape 7 : Extraction des variables microclimatiques
+
+```{r features}
+# Extraire les variables pour analyse
+features <- extract_microclimate_features(
+  lst_raster       = lst_clean,
+  ndvi_raster      = ndvi,
+  landcover_raster = lc,
+  n_sample         = 300
+)
+
+head(features)
+cat("\nDimensions:", nrow(features), "observations,", ncol(features), "variables\n")
+```
+
+---
+
+## Étape 8 : Analyse spatiale (Moran's I)
+
+```{r moran}
+# Détecter les clusters thermiques
+moran_result <- analyze_spatial_correlation(features, variable = "lst", k_neighbours = 5)
+cat("\nMoran's I =", moran_result$moran_i, "\n")
+cat("p-value =", moran_result$p_value, "\n")
+cat(moran_result$interpretation, "\n")
+```
+
+---
+
+## Étape 9 : Classification des zones thermiques
+
+```{r clustering, fig.cap="Zones thermiques identifiées par K-means"}
+thermal_zones <- cluster_thermal_zones(lst_clean, n_clusters = 3)
+
+# Afficher la carte
+terra::plot(thermal_zones$raster,
+            col  = c("#4575b4", "#fee090", "#d73027"),
+            main = "Zones thermiques (K-means, k=3)")
+legend("bottomright",
+       legend = thermal_zones$labels,
+       fill   = c("#4575b4","#fee090","#d73027"), cex = 0.8)
+
+# Statistiques
+print(thermal_zones$stats)
+```
+
+---
+
+## Étape 10 : Modélisation des relations
+
+```{r modeling}
+# Régression linéaire: LST ~ NDVI + autres variables
+model_result <- model_temperature_relationships(features, target = "lst")
+cat("R² =", model_result$r_squared, "\n")
+cat("R² ajusté =", model_result$adj_r_squared, "\n")
+cat("\nCoefficients:\n")
+print(model_result$coefficients)
+cat("\nImportance des variables:\n")
+print(model_result$importance)
+```
+
+---
+
+## Étape 11 : Relation LST ↔ NDVI
+
+```{r lst-ndvi, fig.cap="Scatterplot LST vs NDVI"}
+cor_result <- compare_lst_vs_ndvi(lst_clean, ndvi, layer_index = 1)
+cat("\nCorrelation:", cor_result$correlation, "\n")
+cat(cor_result$interpretation, "\n")
+```
+
+---
+
+## Étape 12 : Interpolation spatiale
+
+```{r interpolation}
+# Ajouter température aux stations
+set.seed(42)
+stations_sf$temperature <- runif(5, 28, 42)
+
+# Interpolation IDW
+temp_idw <- interpolate_temperature(stations_sf, method = "idw",
+                                     resolution = 0.025)
+terra::plot(temp_idw, main = "Température interpolée (IDW)",
+            col = grDevices::hcl.colors(100, "Heat 2"))
+```
+
+---
+
+## Workflow complet en une seule fois
+
+```{r full-workflow, eval=FALSE}
+library(microclimAg)
+
+# 1. Données
+weather  <- simulate_weather_data(n_days = 365)
+lst      <- download_lst_data("2023-01-01", "2023-12-31",
+                               c(-5.5, -5.0, 33.5, 34.0))
+lst      <- clean_lst_data(lst)
+ndvi     <- calculate_ndvi(n_dates = 6)
+lc       <- import_landcover()
+
+# 2. Analyse
+anomalies <- calculate_lst_anomaly(lst)
+features  <- extract_microclimate_features(lst, ndvi, lc)
+zones     <- cluster_thermal_zones(lst)
+model     <- model_temperature_relationships(features)
+cor_res   <- compare_lst_vs_ndvi(lst, ndvi)
+
+# 3. Rapport complet
+generate_report(lst, ndvi, weather, output_file = "rapport_final.html")
+```
+
+---
+
+## Références
+
+- Wan, Z. (2014). MODIS land surface temperature products users' guide.
+- Valor, E., & Caselles, V. (1996). Mapping land surface emissivity from NDVI.
+- Weng, Q. (2009). Thermal infrared remote sensing for urban climate and environmental studies.
+
+---
+
+*Développé à l'IAV Hassan II — package microclimAg v0.1.0*

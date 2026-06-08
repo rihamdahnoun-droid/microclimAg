@@ -1,0 +1,163 @@
+library(testthat)
+library(microclimAg)
+
+test_that("simulate_weather_data retourne un data.frame correct", {
+  weather <- simulate_weather_data(n_days = 10, n_stations = 3)
+
+  expect_s3_class(weather, "data.frame")
+  expect_true(nrow(weather) == 30)  # 10 jours x 3 stations
+  expect_true(all(c("date", "station_id", "temperature", "humidity",
+                    "wind_speed", "radiation") %in% names(weather)))
+  expect_true(all(!is.na(weather$temperature)))
+  expect_true(all(weather$humidity >= 0 & weather$humidity <= 100))
+  expect_true(all(weather$wind_speed >= 0))
+})
+
+test_that("simulate_raster_data retourne un SpatRaster valide", {
+  lst <- simulate_raster_data(type = "lst", n_dates = 3)
+
+  expect_s4_class(lst, "SpatRaster")
+  expect_equal(terra::nlyr(lst), 3)
+  expect_true(all(terra::values(lst) >= 20, na.rm = TRUE))
+  expect_true(all(terra::values(lst) <= 55, na.rm = TRUE))
+})
+
+test_that("simulate_raster_data type ndvi est dans [-1, 1]", {
+  ndvi <- simulate_raster_data(type = "ndvi", n_dates = 2)
+
+  expect_s4_class(ndvi, "SpatRaster")
+  expect_equal(terra::nlyr(ndvi), 2)
+  expect_true(all(terra::values(ndvi) >= -0.3, na.rm = TRUE))
+  expect_true(all(terra::values(ndvi) <= 1.0,  na.rm = TRUE))
+})
+
+test_that("import_weather_data sans fichier retourne donnees simulees", {
+  weather <- import_weather_data()
+
+  expect_s3_class(weather, "data.frame")
+  expect_true(nrow(weather) > 0)
+  expect_true("temperature" %in% names(weather))
+})
+
+test_that("import_station_locations cree un objet sf", {
+  stations_df <- data.frame(
+    station_id = paste0("ST", 1:3),
+    longitude  = c(-5.2, -5.1, -5.3),
+    latitude   = c(33.7, 33.8, 33.6)
+  )
+  sf_obj <- import_station_locations(stations_df, plot = FALSE)
+
+  expect_s3_class(sf_obj, "sf")
+  expect_equal(nrow(sf_obj), 3)
+})
+
+test_that("calculate_ndvi sans arguments retourne un SpatRaster", {
+  ndvi <- calculate_ndvi(n_dates = 2)
+
+  expect_s4_class(ndvi, "SpatRaster")
+  expect_equal(terra::nlyr(ndvi), 2)
+})
+
+test_that("clean_lst_data supprime les valeurs aberrantes", {
+  lst <- simulate_raster_data(type = "lst", n_dates = 1)
+
+  # Ajouter des valeurs aberrantes manuellement
+  vals <- terra::values(lst)
+  vals[1:5] <- 100  # > max_temp
+  vals[6:10] <- -50 # < min_temp
+  terra::values(lst) <- vals
+
+  lst_clean <- clean_lst_data(lst, min_temp = 0, max_temp = 60, interpolate_na = FALSE)
+  vals_clean <- terra::values(lst_clean)
+  expect_true(all(is.na(vals_clean[1:5]) | vals_clean[1:5] <= 60, na.rm = TRUE))
+})
+
+test_that("calculate_lst_anomaly retourne meme dimensions", {
+  lst <- simulate_raster_data(type = "lst", n_dates = 4)
+  anom <- calculate_lst_anomaly(lst, method = "difference")
+
+  expect_s4_class(anom, "SpatRaster")
+  expect_equal(terra::nlyr(anom), terra::nlyr(lst))
+  expect_equal(terra::ncol(anom), terra::ncol(lst))
+  expect_equal(terra::nrow(anom), terra::nrow(lst))
+})
+
+test_that("calculate_lst_anomaly zscore a moyenne nulle", {
+  lst <- simulate_raster_data(type = "lst", n_dates = 6)
+  anom <- calculate_lst_anomaly(lst, method = "zscore")
+
+  # La moyenne des z-scores devrait être proche de 0
+  mean_pixel <- terra::global(anom[[1]], "mean", na.rm = TRUE)$mean
+  expect_lt(abs(mean_pixel), 1.0)  # tolérance ample
+})
+
+test_that("import_landcover retourne un SpatRaster", {
+  lc <- import_landcover()
+
+  expect_s4_class(lc, "SpatRaster")
+  unique_vals <- unique(as.vector(terra::values(lc)))
+  unique_vals <- unique_vals[!is.na(unique_vals)]
+  expect_true(all(unique_vals %in% 1:5))
+})
+
+test_that("extract_microclimate_features retourne un data.frame", {
+  lst  <- simulate_raster_data(type = "lst",  n_dates = 1)
+  ndvi <- simulate_raster_data(type = "ndvi", n_dates = 1)
+
+  features <- extract_microclimate_features(lst, ndvi, n_sample = 100)
+
+  expect_s3_class(features, "data.frame")
+  expect_true(nrow(features) > 0)
+  expect_true(all(c("x", "y", "lst", "ndvi") %in% names(features)))
+})
+
+test_that("cluster_thermal_zones produit k clusters", {
+  lst    <- simulate_raster_data(type = "lst", n_dates = 1)
+  result <- cluster_thermal_zones(lst, n_clusters = 3)
+
+  expect_true(is.list(result))
+  expect_true(all(c("raster", "stats", "labels") %in% names(result)))
+  expect_s4_class(result$raster, "SpatRaster")
+  expect_equal(nrow(result$stats), 3)
+
+  unique_clusters <- unique(as.vector(terra::values(result$raster)))
+  unique_clusters <- unique_clusters[!is.na(unique_clusters)]
+  expect_true(all(unique_clusters %in% 1:3))
+})
+
+test_that("model_temperature_relationships retourne un modele lm", {
+  lst     <- simulate_raster_data(type = "lst",  n_dates = 1)
+  ndvi    <- simulate_raster_data(type = "ndvi", n_dates = 1)
+  features <- extract_microclimate_features(lst, ndvi, n_sample = 200)
+
+  model <- model_temperature_relationships(features)
+
+  expect_true(is.list(model))
+  expect_s3_class(model$model, "lm")
+  expect_true(model$r_squared >= 0 & model$r_squared <= 1)
+})
+
+test_that("interpolate_temperature retourne un SpatRaster", {
+  set.seed(42)
+  stations_df <- data.frame(
+    station_id  = paste0("ST", 1:8),
+    longitude   = runif(8, -5.5, -5.0),
+    latitude    = runif(8, 33.5, 34.0),
+    temperature = runif(8, 25, 40)
+  )
+  stations_sf <- sf::st_as_sf(stations_df, coords = c("longitude", "latitude"), crs = 4326)
+  temp_raster <- interpolate_temperature(stations_sf, method = "idw", resolution = 0.05)
+
+  expect_s4_class(temp_raster, "SpatRaster")
+  expect_true(all(terra::values(temp_raster) >= 20, na.rm = TRUE))
+})
+
+test_that("compare_lst_vs_ndvi retourne une correlation", {
+  lst  <- simulate_raster_data(type = "lst",  n_dates = 1)
+  ndvi <- simulate_raster_data(type = "ndvi", n_dates = 1)
+  result <- compare_lst_vs_ndvi(lst, ndvi, plot = FALSE)
+
+  expect_true(is.list(result))
+  expect_true("correlation" %in% names(result))
+  expect_true(result$correlation >= -1 & result$correlation <= 1)
+})
